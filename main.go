@@ -10,10 +10,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -61,7 +61,12 @@ func main() {
 }
 
 func realMain(args []string, w io.Writer) int {
-	flag.CommandLine.Parse(args)
+	err := flag.CommandLine.Parse(args)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if *versionFlag {
 		fmt.Fprintln(w, version)
 		return 0
@@ -85,7 +90,7 @@ func realMain(args []string, w io.Writer) int {
 
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
-			// Calclate the glob relative to the directory of the file list
+			// Calculate the glob relative to the directory of the file list
 			pattern := strings.TrimSpace(scanner.Text())
 			if !filepath.IsAbs(pattern) {
 				pattern = filepath.Join(dir, pattern)
@@ -102,10 +107,19 @@ func realMain(args []string, w io.Writer) int {
 
 	// Compile target schema
 	sl := gojsonschema.NewSchemaLoader()
-	schemaPath, err := filepath.Abs(*schemaFlag)
+
+	schemaPath := ""
+
+	if *schemaFlag == "embedded" {
+		schemaPath, err = getSchemaPathFromFile(*schemaFlag, docs)
+	} else {
+		schemaPath, err = filepath.Abs(*schemaFlag)
+	}
+
 	if err != nil {
 		return schemaError("%s: unable to convert to absolute path: %s", *schemaFlag, err)
 	}
+
 	for _, ref := range refFlags {
 		for _, p := range glob(ref) {
 			absPath, err := filepath.Abs(p)
@@ -202,14 +216,14 @@ func realMain(args []string, w io.Writer) int {
 }
 
 func jsonLoader(path string) (gojsonschema.JSONLoader, error) {
-	buf, err := ioutil.ReadFile(path)
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	switch filepath.Ext(path) {
 	case ".yml", ".yaml":
-		// TODO YAML requires the precense of a BOM to detect UTF-16
-		// text. Is there a decent hueristic to detect UTF-16 text
+		// TODO YAML requires the presence of a BOM to detect UTF-16
+		// text. Is there a decent heuristic to detect UTF-16 text
 		// missing a BOM so we can provide a better error message?
 		buf, err = yaml.YAMLToJSON(buf)
 	default:
@@ -320,4 +334,42 @@ func (sf *stringFlags) String() string {
 func (sf *stringFlags) Set(value string) error {
 	*sf = append(*sf, value)
 	return nil
+}
+
+func getSchemaPathFromFile(flag string, docs []string) (string, error) {
+	file, err := os.Open(docs[0])
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	firstLine := ""
+
+	if scanner.Scan() {
+		firstLine = scanner.Text()
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	splitPath := strings.Split(docs[0], "/")
+
+	prefix := ""
+
+	if len(splitPath) > 1 {
+		prefix = strings.Join(splitPath[:len(splitPath)-1], "/")
+	}
+
+	re := regexp.MustCompile(`# yaml-language-server: \$schema=(?P<schema>.+)`)
+
+	match := re.FindStringSubmatch(firstLine)
+
+	schemaPath := strings.Join([]string{prefix, match[1]}, "/")
+
+	log.Printf("Schema file: %s", schemaPath)
+
+	return schemaPath, nil
 }
