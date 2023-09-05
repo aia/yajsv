@@ -112,6 +112,11 @@ func realMain(args []string, w io.Writer) int {
 
 	if *schemaFlag == "embedded" {
 		schemaPath, err = getSchemaPathFromFile(*schemaFlag, docs)
+
+		if schemaPath == "" {
+			log.Println("pass")
+			return 0
+		}
 	} else {
 		schemaPath, err = filepath.Abs(*schemaFlag)
 	}
@@ -367,9 +372,14 @@ func getSchemaPathFromFile(flag string, docs []string) (string, error) {
 
 	match := re.FindStringSubmatch(firstLine)
 
+	if match == nil {
+		log.Printf("Embedded schema reference not found")
+		return "", nil
+	}
+
 	schemaPath := strings.Join([]string{prefix, match[1]}, "/")
 
-	log.Printf("Schema file: %s", schemaPath)
+	log.Printf("Embedded schema file: %s", schemaPath)
 
 	return schemaPath, nil
 }
